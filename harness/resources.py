@@ -1,6 +1,7 @@
 import logging
 from functools import partial
-from typing import Iterable
+from typing import Iterable, Optional
+from urllib.parse import quote
 
 import requests
 from yarl import URL
@@ -8,9 +9,12 @@ from yarl import URL
 logger = logging.getLogger('harness')
 
 GET = 'GET'
+POST = 'POST'
+PUT = 'PUT'
+DELETE = 'DELETE'
 
 
-modify_vhost_name = lambda vhost_name: '%2f' if vhost_name == '/' else vhost_name
+modify_vhost_name = partial(quote, safe='')
 
 
 class _Missing:
@@ -20,6 +24,7 @@ class _Missing:
     def __copy__(self):
         return self
 
+
 missing = _Missing()
 
 
@@ -27,6 +32,10 @@ class BaseApiModel(dict):
     def __init__(self, parent, *args, **kwargs):
         self._parent = parent
         super().__init__(*args, **kwargs)
+
+    @property
+    def resource(self):
+        return getattr(self._parent.api_instance, self.model_name)
 
     @property
     def pk(self):
@@ -43,9 +52,55 @@ class BaseApiModel(dict):
 class BindingModel(BaseApiModel):
     model_name = 'bindings'
 
+    def __str__(self):
+        return f'{self.model_name}: {self.get("destination")} [{self.get("routing_key")}] -> {self.get("source")}'
+
     @property
     def pk(self):
-        return f'{self.get("destination")} [{self.get("routing_key")}] -> {self.get("source")}'
+        return self.get('routing_key')
+
+    def delete(self):
+        """
+        todo: автоматом брать destination_type и удалять соответственно
+        """
+        return self.resource.delete(
+            exchange=self.get('source'),
+            queue=self.get('destination'),
+            routing_key=self.get('routing_key'),
+            vhost=self.get('vhost'),
+        )
+
+
+class ExchangeModel(BaseApiModel):
+    model_name = 'exchanges'
+
+    @property
+    def vhost(self):
+        return self.get('vhost')
+
+    def bindings_source(self, **kwargs):
+        return self.resource.bindings_source(name=self.pk, vhost=self.vhost, **kwargs)
+
+    def bindings_destination(self, **kwargs):
+        return self.resource.bindings_destination(name=self.pk, vhost=self.vhost, **kwargs)
+
+
+class UserModel(BaseApiModel):
+    model_name = 'users'
+
+    def change(self, password: str, tags: Optional[str] = None, password_hash: Optional[bool] = False):
+        return self.resource.create(
+            name=self.pk,
+            password=password,
+            tags=tags if tags is not None else self.get('tags'),
+            password_hash=password_hash,
+        )
+
+    def delete(self):
+        return self.resource.delete(self.pk)
+
+    def permissions(self) -> list:
+        return self.resource.get_detail(self.pk, 'permissions')
 
 
 class ApiResource:
@@ -62,11 +117,13 @@ class ApiResource:
 
     def _get_path(self, *args: Iterable[str]) -> str:
         api_name = getattr(self.Meta, 'api_name', '')
-        path = '/'.join((api_name, *filter(bool, args)))
+        path = '/'.join((api_name, *filter(bool, args)))  # fixme: жесть)
+        logger.debug('Generate path: %s', path)
         return path
 
     def _format_result(self, data, data_class=None):
         data_class = data_class or self.model_class
+        logger.debug('Filter class: %s', data_class)
         if isinstance(data, list):
             return [data_class(self, value) for value in data]
         return data_class(self, data)
@@ -84,7 +141,7 @@ class ApiResource:
         """
         return list(filter(partial(self._filter, pattern=filter_pattern), data))
 
-    def get(self, *args):
+    def get_detail(self, *args):
         url = self._get_path(*args)
         response = self._request(GET, url)
         return self._format_result(response)
@@ -94,18 +151,95 @@ class ApiResource:
         response = self._request(GET, url)
         return self._format_result(self._filter_result(response, kwargs), data_class=data_class)
 
+    def create(self, *args, **kwargs):
+        url = self._get_path(*args)
+        response = self._request(POST, url, raw=True, **kwargs)
+        return response.ok
+
+    def delete(self, *args, **kwargs):
+        url = self._get_path(*args)
+        response = self._request(DELETE, url, raw=True, **kwargs)
+        return response.ok
+
+    def change(self, *args, **kwargs):
+        url = self._get_path(*args)
+        response = self._request(PUT, url, raw=True, **kwargs)
+        return response.ok
+
 
 class Connections(ApiResource):
     class Meta(ApiResource.Meta):
         api_name = 'connections'
 
 
+class Permissions(ApiResource):
+    class Meta(ApiResource.Meta):
+        api_name = 'permissions'
+
+    def get_detail(self, name: str, vhost: str = '/'):
+        return super().get_detail(modify_vhost_name(vhost), name)
+
+    def delete(self, name: str, vhost: str = '/'):
+        return super().delete(modify_vhost_name(vhost), name)
+
+
+class Users(ApiResource):
+    model_class = UserModel
+
+    class Meta(ApiResource.Meta):
+        api_name = 'users'
+
+    def get_detail(self, name: str, *args):  # fixme: для UserModel.permissions(), обойти
+        return super().get_detail(name, *args)
+
+    def create(self, name: str, password: str, tags: str = '', password_hash: bool = False):
+        data = {
+            'password_hash' if password_hash else 'password': password,
+            'tags': tags,
+        }
+        return self.change(name, **data)
+
+
+class Bindings(ApiResource):
+    model_class = BindingModel
+
+    class Meta(ApiResource.Meta):
+        api_name = 'bindings'
+
+    def get_detail(self, vhost: str, exchange: str, queue: str, routing_key: str) -> dict:
+        """
+        Queue to exchange.
+        """
+        url = self._get_path(modify_vhost_name(vhost), 'e', exchange, 'q', queue, quote(routing_key))
+        response = self._request(GET, url)
+        return self._format_result(response)
+
+    def get_detail_exchange_to_exchange(self, vhost: str, source_exchange: str, destination_exchange: str, routing_key: str) -> dict:
+        url = self._get_path(modify_vhost_name(vhost), 'e', source_exchange, 'e', destination_exchange, quote(routing_key))
+        response = self._request(GET, url)
+        return self._format_result(response)
+
+    def bind_queue(self, source_exchange: str, queue: str, routing_key: str, arguments: dict = dict(), vhost: str = '/'):
+        return self.create(modify_vhost_name(vhost), 'e', source_exchange, 'q', queue, routing_key=routing_key, arguments=arguments)
+
+    def bind_exchange(self):
+        raise NotImplementedError
+
+    def delete(self, exchange: str, queue: str, routing_key: str, vhost: str = '/') -> bool:
+        """
+        Queue to exchange.
+        """
+        return super().delete(modify_vhost_name(vhost), 'e', exchange, 'q', queue, quote(routing_key))
+
+
 class Exchanges(ApiResource):
+    model_class = ExchangeModel
+
     class Meta(ApiResource.Meta):
         api_name = 'exchanges'
 
-    def get(self, name: str, vhost: str):
-        return super().get(modify_vhost_name(vhost), name)
+    def get_detail(self, name: str, vhost: str):
+        return super().get_detail(modify_vhost_name(vhost), name)
 
     def bindings_source(self, name: str, vhost: str, **kwargs):
         """
@@ -127,14 +261,23 @@ class Api:
             port=port,
         ) / path
 
-    def __get_full_url(self, path: str):
-        return self._api_url / path
+        self.exchanges = Exchanges(self)
+        self.connections = Connections(self)
+        self.bindings = Bindings(self)
+        self.users = Users(self)
+        self.permissions = Permissions(self)
 
-    def request(self, method: str, path: str, params=None, silent: bool = False, **kwargs):
+    def __get_full_url(self, path: str):
+        return self._api_url.human_repr() + '/' + path  # todo: yarl не экранирует звездочку(
+
+    def request(self, method: str, path: str, params=None, silent: bool = False, raw=False, **kwargs):
         url = self.__get_full_url(path)
-        result = requests.request(method, url, params=params, data=kwargs)
+        logger.debug('URL: %s', url)
+        result = requests.request(method, url, params=params, json=kwargs)
 
         if not silent:
             result.raise_for_status()
 
+        if raw:
+            return result
         return result.json()
