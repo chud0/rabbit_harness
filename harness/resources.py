@@ -1,6 +1,6 @@
 import logging
 from functools import partial
-from typing import Iterable, Optional
+from typing import Iterable, Optional, List
 from urllib.parse import quote
 
 import requests
@@ -71,6 +71,30 @@ class BindingModel(BaseApiModel):
         )
 
 
+class PermissionModel(BaseApiModel):
+    model_name = 'permissions'
+
+    @property
+    def pk(self):
+        return self.get('user')
+
+    @property
+    def vhost(self):
+        return self.get('vhost')
+
+    def change(self, read: Optional[str] = None, write: Optional[str] = None,configure: Optional[str] = None):
+        """
+        Change set params only.
+        """
+        return self.resource.create(
+            name=self.pk,
+            vhost=self.vhost,
+            read=read,
+            write=write,
+            configure=configure,
+        )
+
+
 class ExchangeModel(BaseApiModel):
     model_name = 'exchanges'
 
@@ -88,6 +112,10 @@ class ExchangeModel(BaseApiModel):
 class UserModel(BaseApiModel):
     model_name = 'users'
 
+    @property
+    def permissions_resource(self):
+        return getattr(self._parent.api_instance, 'permissions')
+
     def change(self, password: str, tags: Optional[str] = None, password_hash: Optional[bool] = False):
         return self.resource.create(
             name=self.pk,
@@ -99,8 +127,20 @@ class UserModel(BaseApiModel):
     def delete(self):
         return self.resource.delete(self.pk)
 
-    def permissions(self) -> list:
-        return self.resource.get_detail(self.pk, 'permissions')
+    def permission(self, vhost: str = '/') -> PermissionModel:
+        return self.permissions_resource.get_detail(name=self.pk, vhost=vhost)
+
+    def permissions(self) -> List[PermissionModel]:
+        # return self.permissions_resource.get_list()
+        return self.resource.get_list(self.pk, 'permissions', data_class=PermissionModel)
+
+    def set_permission(self, vhost: str = '/', read: Optional[str] = None, write: Optional[str] = None,
+                       configure: Optional[str] = None):
+        """
+        Set if all parameters are set, otherwise update. Permission must be set before updating!
+        """
+        permissions_resource = getattr(self._parent.api_instance, 'permissions')
+        return permissions_resource.create(name=self.pk, vhost=vhost, read=read, write=write, configure=configure)
 
 
 class ApiResource:
@@ -173,11 +213,45 @@ class Connections(ApiResource):
 
 
 class Permissions(ApiResource):
+    model_class = PermissionModel
+
     class Meta(ApiResource.Meta):
         api_name = 'permissions'
 
     def get_detail(self, name: str, vhost: str = '/'):
+        """
+        :param name: user name
+        :param vhost:
+        :return:
+        """
         return super().get_detail(modify_vhost_name(vhost), name)
+
+    def create(self, name: str, read: Optional[str] = None, write: Optional[str] = None,
+               configure: Optional[str] = None, vhost: str = '/'):
+        """
+        Set if all parameters are set, otherwise update. Permission must be set before updating!
+        :param name: user name
+        :param read: read: permission regex, if None will not be changed
+        :param write: read: permission regex, if None will not be changed
+        :param configure: read: permission regex, if None will not be changed
+        :param vhost:
+        :return:
+        """
+        permission_words = ('read', 'write', 'configure')
+
+        permissions = dict(zip(permission_words, (read, write, configure)))
+        permissions = dict(filter(lambda perm_tuple: perm_tuple[-1] is not None, permissions.items()))
+
+        if len(permissions) == 3:  # set all permissions
+            pass
+        else:  # update passed
+            current_permission = self.get_detail(name=name, vhost=vhost)
+
+            for p_name, perm in current_permission.items():
+                if p_name not in permission_words or p_name in permissions:
+                    continue
+                permissions[p_name] = perm
+        return super().change(modify_vhost_name(vhost), name, **permissions)
 
     def delete(self, name: str, vhost: str = '/'):
         return super().delete(modify_vhost_name(vhost), name)
