@@ -1,6 +1,7 @@
+import json
 import logging
 from functools import partial
-from typing import Iterable, Optional, List
+from typing import Iterable, Optional, List, Any, Union
 from urllib.parse import quote
 
 import requests
@@ -12,6 +13,8 @@ GET = 'GET'
 POST = 'POST'
 PUT = 'PUT'
 DELETE = 'DELETE'
+
+StringOrDict = Union[dict, str]
 
 
 modify_vhost_name = partial(quote, safe='')
@@ -94,6 +97,9 @@ class PermissionModel(BaseApiModel):
             configure=configure,
         )
 
+    def delete(self):
+        return self.resource.delete(name=self.pk, vhost=self.vhost)
+
 
 class ExchangeModel(BaseApiModel):
     model_name = 'exchanges'
@@ -131,7 +137,6 @@ class UserModel(BaseApiModel):
         return self.permissions_resource.get_detail(name=self.pk, vhost=vhost)
 
     def permissions(self) -> List[PermissionModel]:
-        # return self.permissions_resource.get_list()
         return self.resource.get_list(self.pk, 'permissions', data_class=PermissionModel)
 
     def set_permission(self, vhost: str = '/', read: Optional[str] = None, write: Optional[str] = None,
@@ -263,6 +268,11 @@ class Users(ApiResource):
     class Meta(ApiResource.Meta):
         api_name = 'users'
 
+    def get_current(self):
+        url = '/whoami'
+        response = self._request(GET, url)
+        return self._format_result(response)
+
     def get_detail(self, name: str, *args):  # fixme: для UserModel.permissions(), обойти
         return super().get_detail(name, *args)
 
@@ -312,17 +322,106 @@ class Exchanges(ApiResource):
     class Meta(ApiResource.Meta):
         api_name = 'exchanges'
 
-    def get_detail(self, name: str, vhost: str):
+    def get_detail(self, name: str, vhost: str = '/'):
         return super().get_detail(modify_vhost_name(vhost), name)
 
-    def bindings_source(self, name: str, vhost: str, **kwargs):
+    def bindings_source(self, name: str, vhost: str = '/', **kwargs):
         """
         A list of all bindings in which a given exchange is the source
         """
         return self.get_list(modify_vhost_name(vhost), name, 'bindings', 'source', data_class=BindingModel, **kwargs)
 
-    def bindings_destination(self, name: str, vhost: str, **kwargs):
+    def bindings_destination(self, name: str, vhost: str = '/', **kwargs):
+        """
+        A list of all bindings in which a given exchange is the destination.
+        """
         return self.get_list(modify_vhost_name(vhost), name, 'bindings', 'destination', data_class=BindingModel, **kwargs)
+
+    def publish_message(self, exchange_name: str, payload: StringOrDict, routing_key: str, properties: dict = None,
+                        payload_encoding: str = 'string', vhost: str = '/'):
+        """
+        Publish a message to a given exchange.
+        Please note that the HTTP API is not ideal for high performance publishing; the need to create a new TCP
+        connection for each message published can limit message throughput compared to AMQP or other protocols using
+        long-lived connections.
+
+        :param exchange_name:
+        :param payload:
+        :param routing_key:
+        :param properties:
+        :param payload_encoding: should be either "string" (in which case the payload will be taken to be the UTF-8
+            encoding of the payload field) or "base64" (in which case the payload field is taken to be base64 encoded)
+        :param vhost:
+        :return:
+        """
+        properties = properties or dict()
+        return self.create(
+            modify_vhost_name(vhost), exchange_name, 'publish',
+            payload=payload,
+            routing_key=routing_key,
+            properties=properties,
+            payload_encoding=payload_encoding,
+        )
+
+
+class Queues(ApiResource):
+
+    class Meta(ApiResource.Meta):
+        api_name = 'queues'
+
+    def create(self, name: str, auto_delete: bool = False, durable: bool = True, arguments: Optional[dict] = None,
+               vhost: str = '/'):
+        arguments = arguments or dict()
+        return super().change(
+            modify_vhost_name(vhost), name,
+            auto_delete=auto_delete,
+            durable=durable,
+            arguments=arguments,
+        )
+
+    def get_list(self, vhost: Optional[str] = None, **kwargs):
+        vhost = modify_vhost_name(vhost) if vhost is not None else None
+        return super().get_list(vhost, **kwargs)
+
+    def get_detail(self, name: str, vhost: str = '/'):
+        return super().get_detail(modify_vhost_name(vhost), name)
+
+    def bindings(self, name: str, vhost: str = '/') -> List:
+        """
+        A list of all bindings on a given queue.
+        :param name:
+        :param vhost:
+        :return:
+        """
+        return super().get_list(modify_vhost_name(vhost), name, 'bindings', data_class=BindingModel)
+
+    def purge(self, name: str, vhost: str = '/'):
+        """
+        Purge queue. Warning! It delete all message!!!
+        :param name:
+        :param vhost:
+        :return:
+        """
+        return super().delete(modify_vhost_name(vhost), name, 'contents')
+
+    def delete(self, name: str, if_empty: Optional[bool] = None, if_unused: Optional[bool] = None, vhost: str = '/'):
+        """
+        Delete queue. if_empty and if_unused params prevent the delete from succeeding if the queue contains messages,
+            or has consumers, respectively.
+        :param name: queue name
+        :param if_empty: if True and queue have message, queue queue will not be deleted
+        :param if_unused: if True and queue have consumers, queue queue will not be deleted
+        :param vhost:
+        :return:
+        """
+        url = self._get_path(modify_vhost_name(vhost), name) + '?'
+        if if_empty is not None:  # fixme
+            url += f'if-empty={json.dumps(if_empty)}'
+        if if_unused is not None:
+            url += f'if-unused={json.dumps(if_unused)}'
+        logger.warning('queue delete url: %s', url)
+        response = self._request(DELETE, url, raw=True, silent=True)
+        return response.ok
 
 
 class Api:
@@ -336,6 +435,7 @@ class Api:
         ) / path
 
         self.exchanges = Exchanges(self)
+        self.queues = Queues(self)
         self.connections = Connections(self)
         self.bindings = Bindings(self)
         self.users = Users(self)
