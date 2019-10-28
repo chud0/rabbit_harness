@@ -196,9 +196,11 @@ class ApiResource:
         response = self._request(GET, url)
         return self._format_result(self._filter_result(response, kwargs), data_class=data_class)
 
-    def create(self, *args, **kwargs):
+    def create(self, *args, raw=False, **kwargs):
         url = self._get_path(*args)
         response = self._request(POST, url, raw=True, **kwargs)
+        if raw:
+            return response
         return response.ok
 
     def delete(self, *args, **kwargs):
@@ -394,6 +396,33 @@ class Queues(ApiResource):
         :return:
         """
         return super().get_list(modify_vhost_name(vhost), name, 'bindings', data_class=BindingModel)
+
+    def get_messages(self, name: str, vhost: str = '/', count: int = 1, requeue: bool = True, encoding: str = 'auto',
+                     truncate: int = 50000) -> List[dict]:
+        """
+        Get messages from a queue.
+        Please note that method is intended for diagnostics etc - it does not implement reliable delivery and so should
+        be treated as a sysadmin's tool rather than a general API for messaging.
+
+        :param name: queue name
+        :param vhost:
+        :param count: controls the maximum number of messages to get. You may get fewer messages than this if the queue
+            cannot immediately provide them.
+        :param requeue: determines whether the messages will be removed from the queue. If requeue is true they will be
+            requeued - but their redelivered flag will be set.
+        :param encoding: must be either "auto" (in which case the payload will be returned as a string if it is valid
+            UTF-8, and base64 encoded otherwise), or "base64" (in which case the payload will always be base64 encoded).
+        :param truncate: is present it will truncate the message payload if it is larger than the size given (in bytes).
+        :return:
+        """
+        return super().create(
+            modify_vhost_name(vhost), name, 'get',
+            raw=True,
+            count=count,
+            requeue=requeue,
+            encoding=encoding,
+            truncate=truncate,
+        ).json()
 
     def purge(self, name: str, vhost: str = '/'):
         """
