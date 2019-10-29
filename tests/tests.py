@@ -1,12 +1,9 @@
-import os
-import sys
+import unittest
 
 from requests import HTTPError
 
-sys.path.append(os.getcwd())
 from harness import Api
 from harness.resources import UserModel, PermissionModel
-import unittest
 
 
 class UsersTests(unittest.TestCase):
@@ -124,7 +121,3 @@ class UsersTests(unittest.TestCase):
         user.set_permission(read=permission['read'])
 
         self.assertDictEqual(dict(user=user_name, vhost='/', **permission), user.permission())  # updated read only
-
-
-if __name__ == '__main__':
-    unittest.main()
