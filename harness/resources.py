@@ -85,17 +85,11 @@ class PermissionModel(BaseApiModel):
     def vhost(self):
         return self.get('vhost')
 
-    def change(self, read: Optional[str] = None, write: Optional[str] = None,configure: Optional[str] = None):
+    def change(self, read: Optional[str] = None, write: Optional[str] = None, configure: Optional[str] = None):
         """
         Change set params only.
         """
-        return self.resource.create(
-            name=self.pk,
-            vhost=self.vhost,
-            read=read,
-            write=write,
-            configure=configure,
-        )
+        return self.resource.create(name=self.pk, vhost=self.vhost, read=read, write=write, configure=configure,)
 
     def delete(self):
         return self.resource.delete(name=self.pk, vhost=self.vhost)
@@ -139,8 +133,9 @@ class UserModel(BaseApiModel):
     def permissions(self) -> List[PermissionModel]:
         return self.resource.get_list(self.pk, 'permissions', data_class=PermissionModel)
 
-    def set_permission(self, vhost: str = '/', read: Optional[str] = None, write: Optional[str] = None,
-                       configure: Optional[str] = None):
+    def set_permission(
+        self, vhost: str = '/', read: Optional[str] = None, write: Optional[str] = None, configure: Optional[str] = None
+    ):
         """
         Set if all parameters are set, otherwise update. Permission must be set before updating!
         """
@@ -233,8 +228,14 @@ class Permissions(ApiResource):
         """
         return super().get_detail(modify_vhost_name(vhost), name)
 
-    def create(self, name: str, read: Optional[str] = None, write: Optional[str] = None,
-               configure: Optional[str] = None, vhost: str = '/'):
+    def create(
+        self,
+        name: str,
+        read: Optional[str] = None,
+        write: Optional[str] = None,
+        configure: Optional[str] = None,
+        vhost: str = '/',
+    ):
         """
         Set if all parameters are set, otherwise update. Permission must be set before updating!
         :param name: user name
@@ -271,7 +272,7 @@ class Users(ApiResource):
         api_name = 'users'
 
     def get_current(self):
-        url = '/whoami'
+        url = 'whoami'
         response = self._request(GET, url)
         return self._format_result(response)
 
@@ -300,13 +301,20 @@ class Bindings(ApiResource):
         response = self._request(GET, url)
         return self._format_result(response)
 
-    def get_detail_exchange_to_exchange(self, vhost: str, source_exchange: str, destination_exchange: str, routing_key: str) -> dict:
-        url = self._get_path(modify_vhost_name(vhost), 'e', source_exchange, 'e', destination_exchange, quote(routing_key))
+    def get_detail_exchange_to_exchange(
+        self, vhost: str, source_exchange: str, destination_exchange: str, routing_key: str
+    ) -> dict:
+        url = self._get_path(
+            modify_vhost_name(vhost), 'e', source_exchange, 'e', destination_exchange, quote(routing_key)
+        )
         response = self._request(GET, url)
         return self._format_result(response)
 
-    def bind_queue(self, source_exchange: str, queue: str, routing_key: str, arguments: dict = dict(), vhost: str = '/'):
-        return self.create(modify_vhost_name(vhost), 'e', source_exchange, 'q', queue, routing_key=routing_key, arguments=arguments)
+    def bind_queue(self, source_exchange: str, queue: str, routing_key: str, arguments: dict = None, vhost: str = '/'):
+        arguments = arguments or dict()
+        return self.create(
+            modify_vhost_name(vhost), 'e', source_exchange, 'q', queue, routing_key=routing_key, arguments=arguments
+        )
 
     def bind_exchange(self):
         raise NotImplementedError
@@ -337,10 +345,19 @@ class Exchanges(ApiResource):
         """
         A list of all bindings in which a given exchange is the destination.
         """
-        return self.get_list(modify_vhost_name(vhost), name, 'bindings', 'destination', data_class=BindingModel, **kwargs)
+        return self.get_list(
+            modify_vhost_name(vhost), name, 'bindings', 'destination', data_class=BindingModel, **kwargs
+        )
 
-    def publish_message(self, exchange_name: str, payload: StringOrDict, routing_key: str, properties: dict = None,
-                        payload_encoding: str = 'string', vhost: str = '/'):
+    def publish_message(
+        self,
+        exchange_name: str,
+        payload: StringOrDict,
+        routing_key: str,
+        properties: dict = None,
+        payload_encoding: str = 'string',
+        vhost: str = '/',
+    ):
         """
         Publish a message to a given exchange.
         Please note that the HTTP API is not ideal for high performance publishing; the need to create a new TCP
@@ -358,7 +375,9 @@ class Exchanges(ApiResource):
         """
         properties = properties or dict()
         return self.create(
-            modify_vhost_name(vhost), exchange_name, 'publish',
+            modify_vhost_name(vhost),
+            exchange_name,
+            'publish',
             payload=payload,
             routing_key=routing_key,
             properties=properties,
@@ -367,18 +386,20 @@ class Exchanges(ApiResource):
 
 
 class Queues(ApiResource):
-
     class Meta(ApiResource.Meta):
         api_name = 'queues'
 
-    def create(self, name: str, auto_delete: bool = False, durable: bool = True, arguments: Optional[dict] = None,
-               vhost: str = '/'):
+    def create(
+        self,
+        name: str,
+        auto_delete: bool = False,
+        durable: bool = True,
+        arguments: Optional[dict] = None,
+        vhost: str = '/',
+    ):
         arguments = arguments or dict()
         return super().change(
-            modify_vhost_name(vhost), name,
-            auto_delete=auto_delete,
-            durable=durable,
-            arguments=arguments,
+            modify_vhost_name(vhost), name, auto_delete=auto_delete, durable=durable, arguments=arguments,
         )
 
     def get_list(self, vhost: Optional[str] = None, **kwargs):
@@ -397,8 +418,15 @@ class Queues(ApiResource):
         """
         return super().get_list(modify_vhost_name(vhost), name, 'bindings', data_class=BindingModel)
 
-    def get_messages(self, name: str, vhost: str = '/', count: int = 1, requeue: bool = True, encoding: str = 'auto',
-                     truncate: int = 50000) -> List[dict]:
+    def get_messages(
+        self,
+        name: str,
+        vhost: str = '/',
+        count: int = 1,
+        requeue: bool = True,
+        encoding: str = 'auto',
+        truncate: int = 50000,
+    ) -> List[dict]:
         """
         Get messages from a queue.
         Please note that method is intended for diagnostics etc - it does not implement reliable delivery and so should
@@ -415,14 +443,20 @@ class Queues(ApiResource):
         :param truncate: is present it will truncate the message payload if it is larger than the size given (in bytes).
         :return:
         """
-        return super().create(
-            modify_vhost_name(vhost), name, 'get',
-            raw=True,
-            count=count,
-            requeue=requeue,
-            encoding=encoding,
-            truncate=truncate,
-        ).json()
+        return (
+            super()
+            .create(
+                modify_vhost_name(vhost),
+                name,
+                'get',
+                raw=True,
+                count=count,
+                requeue=requeue,
+                encoding=encoding,
+                truncate=truncate,
+            )
+            .json()
+        )
 
     def purge(self, name: str, vhost: str = '/'):
         """
@@ -454,14 +488,10 @@ class Queues(ApiResource):
 
 
 class Api:
-    def __init__(self, *, host: str, user: str, password: str, scheme: str = 'https', port: int = 15672, path: str = 'api'):
-        self._api_url = URL.build(
-            scheme=scheme,
-            user=user,
-            password=password,
-            host=host,
-            port=port,
-        ) / path
+    def __init__(
+        self, *, host: str, user: str, password: str, scheme: str = 'https', port: int = 15672, path: str = 'api'
+    ):
+        self._api_url = URL.build(scheme=scheme, user=user, password=password, host=host, port=port,) / path
 
         self.exchanges = Exchanges(self)
         self.queues = Queues(self)
