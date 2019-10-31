@@ -493,12 +493,12 @@ class Api:
     ):
         self._api_url = URL.build(scheme=scheme, user=user, password=password, host=host, port=port,) / path
 
-        self.exchanges = Exchanges(self)
-        self.queues = Queues(self)
-        self.connections = Connections(self)
-        self.bindings = Bindings(self)
         self.users = Users(self)
         self.permissions = Permissions(self)
+        self.connections = Connections(self)
+        self.exchanges = Exchanges(self)
+        self.queues = Queues(self)
+        self.bindings = Bindings(self)
 
     def __get_full_url(self, path: str):
         return self._api_url.human_repr() + '/' + path  # todo: yarl не экранирует звездочку(

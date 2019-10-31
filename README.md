@@ -1,6 +1,9 @@
 # rabbit_harness
 Small RabbitMQ administration library based on [HTTP API](https://pulse.mozilla.org/api/) Managment plugins.
 
+*Read this in other languages: [English](README.md), [Русский](README.ru.md).*
+
+
 ## How it use
 Create api instance:
 ```
