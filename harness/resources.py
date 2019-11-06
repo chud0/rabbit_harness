@@ -1,7 +1,7 @@
 import json
 import logging
 from functools import partial
-from typing import Iterable, Optional, List, Any, Union
+from typing import Iterable, Optional, List, Union
 from urllib.parse import quote
 
 import requests
@@ -363,6 +363,21 @@ class Exchanges(ApiResource):
             arguments: Optional[dict] = None,
             vhost: str = '/',
     ):
+        """
+
+        :param name:
+        :param type: One of: topic, direct, fanout, headers
+        :param auto_delete: If True, the exchange will delete itself after at least one queue or exchange has been bound
+            to this one, and then all queues or exchanges have been unbound.
+        :param durable:
+        :param internal: If True, clients cannot publish to this exchange directly. It can only be used with exchange to
+            exchange bindings.
+        :param arguments:
+            alternate-exchange - If messages to this exchange cannot otherwise be routed, send them to the alternate
+                exchange named here.
+        :param vhost:
+        :return:
+        """
         arguments = arguments if arguments is not None else dict()
         return super().change(modify_vhost_name(vhost), name, type=type, auto_delete=auto_delete, durable=durable,
                               internal=internal, arguments=arguments)
@@ -411,7 +426,7 @@ class Exchanges(ApiResource):
         exchange_name: str,
         payload: StringOrDict,
         routing_key: str,
-        properties: dict = None,
+        properties: Optional[dict] = None,
         payload_encoding: str = 'string',
         vhost: str = '/',
     ):
@@ -430,7 +445,9 @@ class Exchanges(ApiResource):
         :param vhost:
         :return:
         """
-        properties = properties or dict()
+        properties = properties if properties is not None else dict()
+        if isinstance(payload, dict):
+            payload = json.dumps(payload)
         return super().create(
             modify_vhost_name(vhost),
             exchange_name,
