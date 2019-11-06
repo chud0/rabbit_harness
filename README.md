@@ -8,7 +8,7 @@ Small RabbitMQ administration library based on [HTTP API](https://pulse.mozilla.
 Create api instance:
 ```
 from harness import Api
-rmq_api = Api(host='127.0.0.1', user='guest', password=''guest'', scheme='http')
+rmq_api = Api(host='127.0.0.1', user='guest', password='guest', scheme='http')
 ```
 
 > For testing you can up RabbitMQ using Docker: `docker run -p 15672:15672 rabbitmq:3-management`

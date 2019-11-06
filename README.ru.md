@@ -6,7 +6,7 @@
 ## Api
 ```
 from harness import Api
-rmq_api = Api(host='127.0.0.1', user='guest', password=''guest'', scheme='http')
+rmq_api = Api(host='127.0.0.1', user='guest', password='guest', scheme='http')
 ```
 
 > Для тестирования можете запустить RabbitMQ используя Docker: `docker run -p 15672:15672 rabbitmq:3-management`
