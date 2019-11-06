@@ -102,11 +102,25 @@ class ExchangeModel(BaseApiModel):
     def vhost(self):
         return self.get('vhost')
 
+    def delete(self, if_unused: bool = True) -> bool:
+        """
+        Delete exchange.
+
+        :param if_unused: This prevents the delete from succeeding if the exchange is bound to a queue or as a source
+            to another exchange.
+        :return:
+        """
+        return self.resource.delete(name=self.pk, vhost=self.vhost, if_unused=if_unused)
+
     def bindings_source(self, **kwargs):
         return self.resource.bindings_source(name=self.pk, vhost=self.vhost, **kwargs)
 
     def bindings_destination(self, **kwargs):
         return self.resource.bindings_destination(name=self.pk, vhost=self.vhost, **kwargs)
+
+    def bind_queue(self, queue: str, routing_key: str, arguments: Optional[dict] = None):
+        return self.resource.bind_queue(exchange=self.pk, queue=queue, routing_key=routing_key, arguments=arguments,
+                                        vhost=self.vhost)
 
 
 class UserModel(BaseApiModel):
@@ -144,6 +158,7 @@ class UserModel(BaseApiModel):
 
 
 class ApiResource:
+    # todo: rename get_detail, get_list, ... to get, post, put
     model_class = BaseApiModel
 
     class Meta:
@@ -151,6 +166,10 @@ class ApiResource:
 
     def __init__(self, api_instance):
         self.api_instance = api_instance
+
+    @property
+    def bindings(self) -> 'Bindings':
+        return getattr(self.api_instance, 'bindings')
 
     def _request(self, *args, **kwargs):
         return self.api_instance.request(*args, **kwargs)
@@ -228,7 +247,7 @@ class Permissions(ApiResource):
         """
         return super().get_detail(modify_vhost_name(vhost), name)
 
-    def create(
+    def create(  # todo: split on create and change
         self,
         name: str,
         read: Optional[str] = None,
@@ -310,7 +329,8 @@ class Bindings(ApiResource):
         response = self._request(GET, url)
         return self._format_result(response)
 
-    def bind_queue(self, source_exchange: str, queue: str, routing_key: str, arguments: dict = None, vhost: str = '/'):
+    def bind_queue(self, source_exchange: str, queue: str, routing_key: str, arguments: Optional[dict] = None,
+                   vhost: str = '/'):
         arguments = arguments or dict()
         return self.create(
             modify_vhost_name(vhost), 'e', source_exchange, 'q', queue, routing_key=routing_key, arguments=arguments
@@ -327,13 +347,46 @@ class Bindings(ApiResource):
 
 
 class Exchanges(ApiResource):
+    # todo: add bind exchange
     model_class = ExchangeModel
 
     class Meta(ApiResource.Meta):
         api_name = 'exchanges'
 
+    def create(
+            self,
+            name: str,
+            type: str = 'direct',
+            auto_delete: bool = False,
+            durable: bool = True,
+            internal: bool = False,
+            arguments: Optional[dict] = None,
+            vhost: str = '/',
+    ):
+        arguments = arguments if arguments is not None else dict()
+        return super().change(modify_vhost_name(vhost), name, type=type, auto_delete=auto_delete, durable=durable,
+                              internal=internal, arguments=arguments)
+
     def get_detail(self, name: str, vhost: str = '/'):
         return super().get_detail(modify_vhost_name(vhost), name)
+
+    def change(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def delete(self, name: str, if_unused: bool = True, vhost: str = '/'):
+        """
+        Delete exchange.
+
+        :param name:
+        :param if_unused: This prevents the delete from succeeding if the exchange is bound to a queue or as a source
+            to another exchange.
+        :param vhost:
+        :return:
+        """
+        url = self._get_path(modify_vhost_name(vhost), name) + '?' + f'if-unused={json.dumps(if_unused)}'
+        logger.warning('Exchange %s delete path: %s', name, url)
+        response = self._request(DELETE, url, raw=True, silent=True)
+        return response.ok
 
     def bindings_source(self, name: str, vhost: str = '/', **kwargs):
         """
@@ -348,6 +401,10 @@ class Exchanges(ApiResource):
         return self.get_list(
             modify_vhost_name(vhost), name, 'bindings', 'destination', data_class=BindingModel, **kwargs
         )
+
+    def bind_queue(self, exchange: str, queue: str, routing_key: str, arguments: Optional[dict] = None,
+                   vhost: str = '/'):
+        return self.bindings.bind_queue(exchange, queue, routing_key, arguments, vhost)
 
     def publish_message(
         self,
@@ -374,7 +431,7 @@ class Exchanges(ApiResource):
         :return:
         """
         properties = properties or dict()
-        return self.create(
+        return super().create(
             modify_vhost_name(vhost),
             exchange_name,
             'publish',
@@ -482,7 +539,7 @@ class Queues(ApiResource):
             url += f'if-empty={json.dumps(if_empty)}'
         if if_unused is not None:
             url += f'if-unused={json.dumps(if_unused)}'
-        logger.warning('queue delete url: %s', url)
+        logger.warning('Queue %s delete path: %s', name, url)
         response = self._request(DELETE, url, raw=True, silent=True)
         return response.ok
 
